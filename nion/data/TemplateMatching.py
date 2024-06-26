@@ -12,18 +12,15 @@ from cupyx.scipy.ndimage import fourier_uniform
 _ShapeType = Image.ShapeType
 _ImageDataType = Image._ImageDataType
 
-def normalized_corr_gpu(imagesequence: typing.Sequence[_ImageDataType], template: _ImageDataType) -> typing.Sequence[_ImageDataType]:
+def normalized_corr_gpu(imagestack: _ImageDataType, template: _ImageDataType) -> _ImageDataType:
 
-    imagestack = numpy.stack(imagesequence, axis=0)
-    # size_per_elem = 4
     (device_memory_info_free, device_memory_info_total) = cp.cuda.runtime.memGetInfo()
     usable_device_memory = device_memory_info_free * 0.8  # Lets not saturate the card, and give some space to deal with fragmentation
-    page_size_elem = 20 * 1024 * 1024
-    page_size_slices = int(numpy.floor(page_size_elem / template.size))
+    page_size_elem = numpy.prod(imagestack.shape[1:]) # Get the dimensions, excluding the 1st which is stack
+    page_size_elem *= 128 # Estimate it to be approximately 100 bytes in flight per element, lets round up a bit
+    page_size_slices = int(usable_device_memory // page_size_elem)
 
     start_used_memory = device_memory_info_total - device_memory_info_free
-    max_used_memory = start_used_memory
-    max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
 
     # 24
     normalized_template = template - numpy.mean(template)
@@ -31,17 +28,16 @@ def normalized_corr_gpu(imagesequence: typing.Sequence[_ImageDataType], template
     np_signal_scale = template.size * numpy.sum(normalized_template ** 2)
     np_signal_slices = imagestack.shape[0]
 
+
     # template stuff first
     cp_normalized_template = cp.asarray(normalized_template)
     # 25
     cp_normalized_template_conj = cp.conj(cp.fft.fft2(cp_normalized_template))
     del cp_normalized_template
-    # return cp.asnumpy(cp_normalized_template_conj)
 
     result = numpy.empty_like(imagestack)  # np.copy(np_signal)
 
     for slice_index in range(0, np_signal_slices, page_size_slices):
-        print("Slice")
         end_index = min(slice_index + page_size_slices, np_signal_slices)
         num_working_slices = end_index - slice_index
         # Transfer the signal to the GPU
@@ -59,12 +55,9 @@ def normalized_corr_gpu(imagesequence: typing.Sequence[_ImageDataType], template
         for slice in range(num_working_slices):
             cp_fourier_uniform[slice, :, :] = cpx.scipy.ndimage.fourier_uniform(cp_fft_image[slice, :, :],
                                                                                 template.shape)
-
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_fft_image
 
         cp_image_squared_means = cp.fft.ifft2(cp_fourier_uniform, axes=(1, 2))
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_fourier_uniform
         cp_image_squared_means = cp.real(cp_image_squared_means)
         cp_image_squared_means = cp.square(cp_image_squared_means)
@@ -72,7 +65,6 @@ def normalized_corr_gpu(imagesequence: typing.Sequence[_ImageDataType], template
         # 27
         cp_image = cp.square(cp_image)
         cp_fft_image_squared = cp.fft.fft2(cp_image)
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_image
 
         # fourier uniform
@@ -81,8 +73,6 @@ def normalized_corr_gpu(imagesequence: typing.Sequence[_ImageDataType], template
         for slice in range(num_working_slices):
             cp_fft_image_squared_means[slice, :, :] = cpx.scipy.ndimage.fourier_uniform(
                 cp_fft_image_squared[slice, :, :], template.shape)
-
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_fft_image_squared
 
         # 34
@@ -90,44 +80,34 @@ def normalized_corr_gpu(imagesequence: typing.Sequence[_ImageDataType], template
 
         # 37
         cp_image_variance = cp.real(cp.fft.ifft2(cp_fft_image_squared_means, axes=(1, 2)))
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_fft_image_squared_means
         cp_image_variance = cp.subtract(cp_image_variance, cp_image_squared_means)
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_image_squared_means
 
         # 35
         cp_fft_corr = cp.fft.ifft2(cp_fft_corr, axes=(1, 2))
         cp_fft_corr = cp.real(cp_fft_corr)
         cp_corr = cp.roll(cp_fft_corr, shift=shift, axis=(1, 2))
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_fft_corr
 
         # 38
         cp_denom = cp_image_variance * np_signal_scale
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_image_variance
         cp_denom_max = cp.max(cp_denom)
-        # cp_denom[cp_denom < 0] = cp_denom_max
         cp_denom = cp.where(cp_denom < 0, cp_denom_max, cp_denom)
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_denom_max
 
         # 40
         cp_denom = cp.sqrt(cp_denom)
         cp_corr = cp_corr / cp_denom[cp.newaxis, :, :]
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_denom
 
-        # return cp.asnumpy(cp_corr)
         cp_corr = cp.where(cp_corr > 1.1, 0, cp_corr)
         result[slice_index:end_index, :, :] = cp.asnumpy(cp_corr)
-        max_used_memory = max(max_used_memory, cp.cuda.runtime.memGetInfo()[1] - cp.cuda.runtime.memGetInfo()[0])
         del cp_corr
         fft_cache = cp.fft.config.get_plan_cache()
         fft_cache.clear()
         cp.cuda.runtime.deviceSynchronize()
-        # result.append(cp.asnumpy(cp_corr))
 
     del cp_normalized_template_conj
 
@@ -137,8 +117,6 @@ def normalized_corr_gpu(imagesequence: typing.Sequence[_ImageDataType], template
     (device_memory_info_free_end, device_memory_info_total_2nd) = cp.cuda.runtime.memGetInfo()
     usable_device_memory_end = device_memory_info_free_end  # Lets not saturate the card, and give some space to deal with fragmentation
     # print(usable_device_memory_end)
-    #print(max_used_memory)
-
     return result
 
 
@@ -228,10 +206,7 @@ def match_template(image: _ImageDataType, template: _ImageDataType) -> _ImageDat
     ccorr[ccorr > 1.1] = 0
     return ccorr
 
-def match_template_gpu(image: typing.Sequence[_ImageDataType], template: _ImageDataType) -> typing.Sequence[_ImageDataType]:
+def match_template_gpu(image: _ImageDataType, template: _ImageDataType) -> _ImageDataType:
     xcorr = normalized_corr_gpu(image, template)
-    result = []
-    for item in xcorr:
-        item[item > 1.1] = 0
-        result.append(item)
-    return result
+    # The >1.1 check is done before data returns from the GPU
+    return xcorr

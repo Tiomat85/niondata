@@ -385,8 +385,6 @@ def function_match_template_gpu(image_xdata_in: _DataAndMetadataLike, template_x
     Inputs can be 1D or 2D and the template must be smaller than or the same size as the image.
     """
     image_xdata = DataAndMetadata.promote_ndarray(image_xdata_in)
-    print(type(image_xdata.data))
-    print(image_xdata.data.shape)
     template_xdata = DataAndMetadata.promote_ndarray(template_xdata_in)
     # assert image_xdata.is_data_2d or image_xdata.is_data_1d
     # assert template_xdata.is_data_2d or template_xdata.is_data_1d
@@ -407,7 +405,6 @@ def function_match_template_gpu(image_xdata_in: _DataAndMetadataLike, template_x
     ccorr = TemplateMatching.match_template_gpu(image, template)
     if squeeze:
         ccorr = numpy.squeeze(ccorr)
-    ccorr = numpy.stack(ccorr, axis=0)
     return DataAndMetadata.new_data_and_metadata(ccorr, dimensional_calibrations=image_xdata.dimensional_calibrations)
 
 
@@ -477,6 +474,18 @@ def function_register_template_gpu(image_xdata_in: _DataAndMetadataLike, templat
             # Now remove any offset
             shifts = shifts - shifts[0, :]
             shifts = 0 - shifts
+            for index,val in enumerate(shifts):
+                for i in range(len(ccorr_slice.shape)):
+                    offset = ccorr_slice.shape[i] // 2
+                    maxShift = offset * 0.9 # Assume that a shift of that much is unlikely
+                    # print(maxShift)
+                    if shifts[index, i] >= maxShift:
+                        print("need to decrease")
+                        shifts[index, i] -= offset
+                    if shifts[index, i] <= -maxShift:
+                        print("need to increase")
+                        shifts[index, i] += offset
+
         return shifts
     return shifts
 
