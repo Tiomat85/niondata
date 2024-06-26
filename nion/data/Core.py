@@ -378,6 +378,38 @@ def function_match_template(image_xdata_in: _DataAndMetadataLike, template_xdata
         ccorr = numpy.squeeze(ccorr)
     return DataAndMetadata.new_data_and_metadata(ccorr, dimensional_calibrations=image_xdata.dimensional_calibrations)
 
+def function_match_template_gpu(image_xdata_in: _DataAndMetadataLike, template_xdata_in: _DataAndMetadataLike) -> DataAndMetadata.DataAndMetadata:
+    """
+    Calculates the normalized cross-correlation for a template with an image. The returned xdata will have the same
+    shape as `image_xdata`.
+    Inputs can be 1D or 2D and the template must be smaller than or the same size as the image.
+    """
+    image_xdata = DataAndMetadata.promote_ndarray(image_xdata_in)
+    print(type(image_xdata.data))
+    print(image_xdata.data.shape)
+    template_xdata = DataAndMetadata.promote_ndarray(template_xdata_in)
+    # assert image_xdata.is_data_2d or image_xdata.is_data_1d
+    # assert template_xdata.is_data_2d or template_xdata.is_data_1d
+    # assert image_xdata.data_descriptor == template_xdata.data_descriptor
+    # The template needs to be the smaller of the two if they have different shape
+    # assert numpy.less_equal(template_xdata.data_shape, image_xdata.data_shape).all()
+    image = image_xdata.data
+    template = template_xdata.data
+    # assert image is not None
+    # assert template is not None
+    squeeze = False
+    if image_xdata.is_data_1d:
+        image = image[..., numpy.newaxis]
+        template = template[..., numpy.newaxis]
+        assert image is not None
+        assert template is not None
+        squeeze = True
+    ccorr = TemplateMatching.match_template_gpu(image, template)
+    if squeeze:
+        ccorr = numpy.squeeze(ccorr)
+    ccorr = numpy.stack(ccorr, axis=0)
+    return DataAndMetadata.new_data_and_metadata(ccorr, dimensional_calibrations=image_xdata.dimensional_calibrations)
+
 
 def function_register_template(image_xdata_in: _DataAndMetadataLike, template_xdata_in: _DataAndMetadataLike, ccorr_mask: typing.Optional[_DataAndMetadataLike] = None) -> typing.Tuple[float, typing.Tuple[float, ...]]:
     """
@@ -404,6 +436,49 @@ def function_register_template(image_xdata_in: _DataAndMetadataLike, template_xd
             if not error and ccoeff is not None and max_pos is not None:
                 return ccoeff, tuple(max_pos[i] - image_xdata.data_shape[i] // 2 for i in range(len(image_xdata.data_shape)))
     return 0.0, (0.0, ) * len(image_xdata.data_shape)
+
+def function_register_template_gpu(image_xdata_in: _DataAndMetadataLike, template_xdata_in: _DataAndMetadataLike, ccorr_mask: typing.Optional[_DataAndMetadataLike] = None): # -> # typing.Sequence[typing.Tuple[float, typing.Tuple[float, ...]]]:
+    """
+    Calculates and returns the position of a template on an image. The returned values are the intensity if the
+    normalized cross-correlation peak (between -1 and 1) and the sub-pixel position of the template on the image.
+    The sub-pixel position is calculated by fitting a parabola to the tip of the cross-correlation peak.
+    Inputs can be 1D or 2D and the template must be smaller than or the same size as the image.
+    If "ccorr_mask" is not "None", it should be a boolean array with the same shape as "image_xdata_in". It is then
+    used to mask the cross-correlation array before finding the maximum.
+    """
+    image_xdata = DataAndMetadata.promote_ndarray(image_xdata_in)
+    template_xdata = DataAndMetadata.promote_ndarray(template_xdata_in)
+    ccorr_mask_promoted = None
+    if ccorr_mask is not None:
+        ccorr_mask_promoted = DataAndMetadata.promote_ndarray(ccorr_mask)
+    ccorr_xdata = function_match_template_gpu(image_xdata, template_xdata)
+
+    # print("corr_xdata")
+    # print(type(ccorr_xdata))
+    ccorr_data = ccorr_xdata.data
+    shifts = numpy.zeros((ccorr_data.shape[0], 2))
+
+    if ccorr_xdata:
+        if ccorr_data is not None:
+
+            for index in range(ccorr_data.shape[0]):
+                ccorr_slice = ccorr_data[index, :, :]
+                error, ccoeff, max_pos = TemplateMatching.find_ccorr_max(ccorr_slice)
+                # print(max_pos)
+
+                if not error and ccoeff is not None and max_pos is not None:
+                    # shifts[0, 0] = max_pos[0] - ccorr_slice.shape[0]
+                    # shifts[0, 1] = max_pos[1] - ccorr_slice.shape[1]
+
+                    for i in range(len(ccorr_slice.shape)):
+                        shifts[index, i] = max_pos[i] - ccorr_slice.shape[i] // 2
+
+
+            # Now remove any offset
+            shifts = shifts - shifts[0, :]
+            shifts = 0 - shifts
+        return shifts
+    return shifts
 
 
 def function_shift(src_in: _DataAndMetadataLike, shift: typing.Tuple[float, ...], *, order: int = 1) -> DataAndMetadata.DataAndMetadata:

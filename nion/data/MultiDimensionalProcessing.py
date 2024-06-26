@@ -273,6 +273,7 @@ def function_measure_multi_dimensional_shifts(xdata: DataAndMetadata.DataAndMeta
         sections.append(navigation_len)
     barrier = threading.Barrier(len(sections))
 
+
     def run_on_thread(range_: range) -> None:
         if _has_mkl:
             mkl.set_num_threads_local(1)
@@ -302,24 +303,50 @@ def function_measure_multi_dimensional_shifts(xdata: DataAndMetadata.DataAndMeta
         finally:
             barrier.wait()
 
-    if max_shift is not None and reference_index is not None:
-        # Set up the threads for the case with max_shift and reference index: As explained above, we need a special
-        # setup because the result relies on the previous shift.
-        if len(sections) == 2:
-            if reference_index == 0:
-                threading.Thread(target=run_on_thread, args=(range(sections[0], sections[1]),)).start()
-            # Reference index is the last frame, so go backwards from there
+    # Testing, lets pick a mode at random
+    import random
+    calculation_mode = random.randint(0,1)
+    if calculation_mode == 0:
+        print("CPU")
+
+        if max_shift is not None and reference_index is not None:
+            # Set up the threads for the case with max_shift and reference index: As explained above, we need a special
+            # setup because the result relies on the previous shift.
+            if len(sections) == 2:
+                if reference_index == 0:
+                    threading.Thread(target=run_on_thread, args=(range(sections[0], sections[1]),)).start()
+                # Reference index is the last frame, so go backwards from there
+                else:
+                    threading.Thread(target=run_on_thread, args=(range(sections[1] - 1, sections[0] - 1, -1),)).start()
             else:
-                threading.Thread(target=run_on_thread, args=(range(sections[1] - 1, sections[0] - 1, -1),)).start()
+                # If the reference index is somewhere inside the sequence, we can use two threads, one going from
+                # reference_index to 0 (backwards) and one gaing from reference_index to the end.
+                threading.Thread(target=run_on_thread, args=(range(sections[1], sections[0] - 1, -1),)).start()
+                threading.Thread(target=run_on_thread, args=(range(sections[1], sections[2]),)).start()
         else:
-            # If the reference index is somewhere inside the sequence, we can use two threads, one going from
-            # reference_index to 0 (backwards) and one gaing from reference_index to the end.
-            threading.Thread(target=run_on_thread, args=(range(sections[1], sections[0] - 1, -1),)).start()
-            threading.Thread(target=run_on_thread, args=(range(sections[1], sections[2]),)).start()
-    else:
-        for i in range(len(sections) - 1):
-            threading.Thread(target=run_on_thread, args=(range(sections[i], sections[i+1]),)).start()
-    barrier.wait()
+            for i in range(len(sections) - 1):
+                threading.Thread(target=run_on_thread, args=(range(sections[i], sections[i+1]),)).start()
+        barrier.wait()
+
+    elif calculation_mode == 1:
+        print("GPU")
+        try:
+            # print(type(xdata.data))
+            gpu_shifts = Core.function_register_template_gpu(xdata.data, reference_data)
+            shifts = gpu_shifts
+            # print(shifts.shape)
+            # print(gpu_shifts.shape)
+            # diff_shifts = gpu_shifts - shifts
+            # numpy.set_printoptions(threshold=numpy.inf)
+            # print(diff_shifts)
+            # numpy.set_printoptions(threshold=1000)
+
+        except Exception as ex:
+            import traceback
+            tb_str = traceback.format_exc()
+            print("Formatted traceback:")
+            print(tb_str)
+
 
     # For debugging it is helpful to run a non-threaded version of the code. Comment out the 3 lines above and uncomment
     # the line below to do so. You also need to comment out "barrier.wait()" in the function running on the thread.
@@ -332,6 +359,9 @@ def function_measure_multi_dimensional_shifts(xdata: DataAndMetadata.DataAndMeta
             shifts = numpy.cumsum(shifts, axis=1)
         shifts = numpy.cumsum(shifts, axis=0)
 
+    print(shifts.shape)
+    print(intensity_calibration)
+    print(dimensional_calibrations)
     return DataAndMetadata.new_data_and_metadata(shifts,
                                                  intensity_calibration=intensity_calibration,
                                                  dimensional_calibrations=dimensional_calibrations)
