@@ -305,7 +305,11 @@ def function_measure_multi_dimensional_shifts(xdata: DataAndMetadata.DataAndMeta
 
     # Testing, lets pick a mode at random
     import random
-    calculation_mode = random.randint(1,1)
+    calculation_mode = random.randint(0,1)
+
+    import time
+    start = time.time()
+
     if calculation_mode == 0:
         print("CPU")
 
@@ -331,20 +335,8 @@ def function_measure_multi_dimensional_shifts(xdata: DataAndMetadata.DataAndMeta
     elif calculation_mode == 1:
         print("GPU")
         try:
-            # print(type(xdata.data))
-            import time
-            start = time.time()
             gpu_shifts = Core.function_register_template_gpu(xdata.data, reference_data)
-            end = time.time()
-            elapsed_time = end - start
-            print(f"Elapsed time: {elapsed_time:.6f} seconds")
             shifts = gpu_shifts
-            # print(shifts.shape)
-            # print(gpu_shifts.shape)
-            # diff_shifts = gpu_shifts - shifts
-            # numpy.set_printoptions(threshold=numpy.inf)
-            # print(diff_shifts)
-            # numpy.set_printoptions(threshold=1000)
 
         except Exception as ex:
             import traceback
@@ -375,11 +367,8 @@ def function_measure_multi_dimensional_shifts(xdata: DataAndMetadata.DataAndMeta
         barrier.wait()
 
         try:
-            # print(type(xdata.data))
             gpu_shifts = Core.function_register_template_gpu(xdata.data, reference_data)
             # shifts = gpu_shifts
-            # print(shifts.shape)
-            # print(gpu_shifts.shape)
             diff_shifts = gpu_shifts - shifts
             numpy.set_printoptions(threshold=numpy.inf)
             print(diff_shifts)
@@ -392,6 +381,9 @@ def function_measure_multi_dimensional_shifts(xdata: DataAndMetadata.DataAndMeta
             print("Formatted traceback:")
             print(tb_str)
 
+    end = time.time()
+    elapsed_time = end - start
+    print(f"Total Elapsed time: {elapsed_time:.6f} seconds")
 
     # For debugging it is helpful to run a non-threaded version of the code. Comment out the 3 lines above and uncomment
     # the line below to do so. You also need to comment out "barrier.wait()" in the function running on the thread.

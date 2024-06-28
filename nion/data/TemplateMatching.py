@@ -28,14 +28,13 @@ def normalized_corr_gpu(imagestack: _ImageDataType, template: _ImageDataType) ->
     np_signal_scale = template.size * numpy.sum(normalized_template ** 2)
     np_signal_slices = imagestack.shape[0]
 
-
     # template stuff first
     cp_normalized_template = cp.asarray(normalized_template)
     # 25
     cp_normalized_template_conj = cp.conj(cp.fft.fft2(cp_normalized_template))
     del cp_normalized_template
 
-    result = numpy.empty_like(imagestack)  # np.copy(np_signal)
+    result = numpy.empty_like(imagestack)
 
     for slice_index in range(0, np_signal_slices, page_size_slices):
         end_index = min(slice_index + page_size_slices, np_signal_slices)
@@ -202,11 +201,21 @@ def find_ccorr_max(ccorr: _ImageDataType) -> typing.Tuple[int, typing.Optional[f
 
 
 def match_template(image: _ImageDataType, template: _ImageDataType) -> _ImageDataType:
+    # import time
+    # start = time.time()
     ccorr = normalized_corr(image, template)
     ccorr[ccorr > 1.1] = 0
+    # end = time.time()
+    # elapsed_time = end - start
+    # print(f"CPU time: {elapsed_time:.6f} seconds")
     return ccorr
 
 def match_template_gpu(image: _ImageDataType, template: _ImageDataType) -> _ImageDataType:
+    import time
+    start = time.time()
     xcorr = normalized_corr_gpu(image, template)
+    end = time.time()
+    elapsed_time = end - start
+    print(f"GPU time: {elapsed_time:.6f} seconds")
     # The >1.1 check is done before data returns from the GPU
     return xcorr

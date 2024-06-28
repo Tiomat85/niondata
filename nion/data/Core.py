@@ -393,8 +393,8 @@ def function_match_template_gpu(image_xdata_in: _DataAndMetadataLike, template_x
     # assert numpy.less_equal(template_xdata.data_shape, image_xdata.data_shape).all()
     image = image_xdata.data
     template = template_xdata.data
-    # assert image is not None
-    # assert template is not None
+    assert image is not None
+    assert template is not None
     squeeze = False
     if image_xdata.is_data_1d:
         image = image[..., numpy.newaxis]
@@ -450,35 +450,26 @@ def function_register_template_gpu(image_xdata_in: _DataAndMetadataLike, templat
         ccorr_mask_promoted = DataAndMetadata.promote_ndarray(ccorr_mask)
     ccorr_xdata = function_match_template_gpu(image_xdata, template_xdata)
 
-    # print("corr_xdata")
-    # print(type(ccorr_xdata))
     ccorr_data = ccorr_xdata.data
     shifts = numpy.zeros((ccorr_data.shape[0], 2))
 
     if ccorr_xdata:
         if ccorr_data is not None:
-
             for index in range(ccorr_data.shape[0]):
                 ccorr_slice = ccorr_data[index, :, :]
                 error, ccoeff, max_pos = TemplateMatching.find_ccorr_max(ccorr_slice)
-                # print(max_pos)
 
                 if not error and ccoeff is not None and max_pos is not None:
-                    # shifts[0, 0] = max_pos[0] - ccorr_slice.shape[0]
-                    # shifts[0, 1] = max_pos[1] - ccorr_slice.shape[1]
-
                     for i in range(len(ccorr_slice.shape)):
                         shifts[index, i] = max_pos[i] - ccorr_slice.shape[i] // 2
-
 
             # Now remove any offset
             shifts = shifts - shifts[0, :]
             shifts = 0 - shifts
-            for index,val in enumerate(shifts):
+            for index, val in enumerate(shifts):
                 for i in range(len(ccorr_slice.shape)):
                     offset = ccorr_slice.shape[i] // 2
                     maxShift = offset * 0.9 # Assume that a shift of that much is unlikely
-                    # print(maxShift)
                     if shifts[index, i] >= maxShift:
                         print("need to decrease")
                         shifts[index, i] -= offset
